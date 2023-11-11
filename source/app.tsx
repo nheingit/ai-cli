@@ -1,14 +1,29 @@
 import React, {FC, useState, useEffect} from 'react';
-import {Text} from 'ink';
+import {Text, Box} from 'ink';
 import * as http from 'http';
-import {IncomingMessage} from 'http';
 
 type Props = {
 	name: string | undefined;
 };
 
 interface StreamComponentProps {
-	stream: NodeJS.ReadableStream;
+	prompt: string;
+}
+
+interface ResponseObject {
+	model: string;
+	created_at: string;
+	response: string;
+	done: boolean;
+	context?: number[];
+	total_duration?: number;
+	load_duration?: number;
+	sample_count?: number;
+	sample_duration?: number;
+	prompt_eval_count?: number;
+	prompt_eval_duration?: number;
+	eval_count?: number;
+	eval_duration?: number;
 }
 
 export default function App({name = 'Stranger'}: Props) {
@@ -19,33 +34,54 @@ export default function App({name = 'Stranger'}: Props) {
 	);
 }
 
-const StreamComponent: FC<StreamComponentProps> = ({stream}) => {
-	const [data, setData] = useState('');
+export const StreamComponent: FC<StreamComponentProps> = ({prompt}) => {
+	const [data, setData] = useState<string>('');
 
 	useEffect(() => {
-		stream.on('data', chunk => {
-			setData(currentData => currentData + chunk);
-		});
-		stream.on('error', error => {
-			console.error('Stream error:', error);
-		});
+		getYourStream(prompt, incomingStream => {
+			let buffer = '';
+			incomingStream.on('data', chunk => {
+				buffer += chunk.toString();
+				let boundary = buffer.indexOf('\n');
 
-		stream.on('end', () => {
-			console.log('Stream ended');
+				while (boundary !== -1) {
+					const piece = buffer.substring(0, boundary);
+					buffer = buffer.substring(boundary + 1);
+					boundary = buffer.indexOf('\n');
+
+					try {
+						const responseObject: ResponseObject = JSON.parse(piece);
+						setData(currentData => currentData + responseObject.response);
+					} catch (e) {
+						console.error('Error parsing JSON:', e);
+					}
+				}
+			});
+
+			incomingStream.on('error', error => {
+				console.error('Stream error:', error);
+			});
+
+			incomingStream.on('end', () => {
+				console.log('Stream ended');
+			});
 		});
+	}, [prompt]);
 
-		return () => {
-			stream.removeAllListeners();
-		};
-	}, [stream]);
-
-	return <Text>{data}</Text>;
+	return (
+		<Box flexDirection="column">
+			<Text>{data}</Text>
+		</Box>
+	);
 };
 
-function getYourStream(): Promise<IncomingMessage> {
+export function getYourStream(
+	prompt: string,
+	callback: (stream: http.IncomingMessage) => void,
+): void {
 	const postData = JSON.stringify({
 		model: 'zephyr',
-		prompt: 'Why is the sky blue?',
+		prompt,
 	});
 
 	const options: http.RequestOptions = {
@@ -59,20 +95,20 @@ function getYourStream(): Promise<IncomingMessage> {
 		},
 	};
 
-	return new Promise((resolve, reject) => {
-		const req = http.request(options, res => {
-			if (res.statusCode < 200 || res.statusCode >= 300) {
-				reject(new Error(`Status Code: ${res.statusCode}`));
-			} else {
-				resolve(res);
-			}
-		});
+	const req = http.request(options, res => {
+		// Check if the response is empty
+		if (res.statusCode === 204 || res.headers['content-length'] === '0') {
+			console.error('Empty response from the server');
+			return;
+		}
 
-		req.on('error', e => {
-			reject(e);
-		});
-
-		req.write(postData);
-		req.end();
+		callback(res); // Process the stream only if there is content
 	});
+
+	req.on('error', e => {
+		console.error('HTTP request error:', e);
+	});
+
+	req.write(postData);
+	req.end();
 }

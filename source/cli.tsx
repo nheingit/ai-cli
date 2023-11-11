@@ -2,7 +2,7 @@
 import React from 'react';
 import {render} from 'ink';
 import meow from 'meow';
-import App from './app.js';
+import App, {StreamComponent} from './app.js';
 
 const cli = meow(
 	`
@@ -18,9 +18,19 @@ const cli = meow(
 	},
 );
 
-const name = cli.input[0];
+const command = cli.input[0];
+const question = cli.input.slice(1).join(' ');
 
-render(<App name={name} />);
+const MainComponent = () => {
+	if (command === 'ask' && question) {
+		return <StreamComponent prompt={question} />;
+	} else {
+		// Default behavior or some error handling
+		return <App name={command} />;
+	}
+};
+
+render(<MainComponent />);
 
 // const cli = meow(
 // 	`
